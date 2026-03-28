@@ -63,8 +63,8 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     assert args.model_type.lower() in [
-        "llama",
-    ], "We only support llama architecture for now."
+        "llama", "qwen3",
+    ], "We only support llama/qwen3 architecture for now."
 
     config = AutoConfig.from_pretrained(args.model_path, trust_remote_code=True)
     

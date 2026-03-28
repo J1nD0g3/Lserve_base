@@ -44,7 +44,7 @@ class DecodingAttentionWrapper(torch.nn.Module):
         self.rope_scaling = rope_scaling
         if self.rope_scaling is not None:
             self.rope_scaling_factor = self.rope_scaling["factor"]
-            assert self.rope_scaling["type"] == "linear", f"Unsupported rope scaling type {self.rope_scaling['type']}"
+            assert self.rope_scaling["type"] in ("linear", "yarn"), f"Unsupported rope scaling type {self.rope_scaling['type']}"
         else:
             self.rope_scaling_factor = 1.0
         self.neox_rotary_style = neox_rotary_style

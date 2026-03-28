@@ -1,0 +1,9 @@
+{
+  "model_name": "/home/jheo/models/Qwen3-8B",
+  "context_length_min": 1000,
+  "context_length_max": 4096,
+  "num_samples": 3,
+  "sink_size": 128,
+  "recent_size": 256,
+  "profiled_at": "2026-03-25 11:54:16"
+}

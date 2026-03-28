@@ -129,6 +129,21 @@ class LlamaMLP(nn.Module):
         #     activation_buffer.out_down_proj_act_buffer,
         # )
 
+class QKRMSNorm(nn.Module):
+    """RMSNorm for QK normalization, applied per-head on the head_dim dimension."""
+    def __init__(self, head_dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(head_dim))
+        self.eps = eps
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: [..., head_dim]
+        input_dtype = x.dtype
+        variance = x.float().pow(2).mean(-1, keepdim=True)
+        x = x * torch.rsqrt(variance + self.eps)
+        return (self.weight * x).to(input_dtype)
+
+
 class LlamaAttention(nn.Module):
     def __init__(
         self,
@@ -194,6 +209,12 @@ class LlamaAttention(nn.Module):
             self.total_num_heads * self.head_dim, hidden_size, bias=attention_bias
         )
         self.kv_scale_quant_orig = nn.Parameter(torch.ones(2))
+
+        # Qwen3 QK normalization support (Qwen3 always uses QK norm but has no explicit config flag)
+        self.qk_norm = getattr(args, "qk_norm", False) or getattr(args, "model_type", "") == "qwen3"
+        if self.qk_norm:
+            self.q_norm = QKRMSNorm(self.head_dim)
+            self.k_norm = QKRMSNorm(self.head_dim)
         self.kv_max_seq_len = min(max_seq_len, self.max_position_embeddings)
 
         self.invoke_quant = self.invoke_quant_wo_act_sum
@@ -265,6 +286,14 @@ class LlamaAttention(nn.Module):
             kv_scale_quant_orig = self.kv_scale_quant_orig.float()
             kv_scale_orig_quant = 1 / kv_scale_quant_orig
 
+            # Apply QK normalization before RoPE (Qwen3)
+            if self.qk_norm:
+                qkv = activation_buffer.qkv_proj_act_buffer
+                q_part = qkv[:, :self.q_size].reshape(-1, self.total_num_heads, self.head_dim)
+                qkv[:, :self.q_size] = self.q_norm(q_part).reshape(-1, self.q_size)
+                k_part = qkv[:, self.q_size:self.q_size + self.kv_size].reshape(-1, self.num_kv_heads, self.head_dim)
+                qkv[:, self.q_size:self.q_size + self.kv_size] = self.k_norm(k_part).reshape(-1, self.kv_size)
+
             self.apply_bias_rope_update_kv_cache_wrapper(
                 activation_buffer.qkv_proj_act_buffer, input_metadata, 
                 self.retrieval_head_flags, self.head_rank_table,
@@ -305,12 +334,11 @@ class LlamaAttention(nn.Module):
             q = q.reshape(q.size(0), self.total_num_heads, self.head_dim)
             k = k.reshape(k.size(0), self.num_kv_heads, self.head_dim)
             v = v.reshape(v.size(0), self.num_kv_heads, self.head_dim)
-            # alibi_slopes = None
-            # memory_max_len = self.kv_max_seq_len
-            # tokens_per_block = 64
-            
-            # size_per_retrieval_token = self.num_retrieval_kv_heads * self.head_dim * (1 if self.use_int8 else 2) // (2 if self.kv_cache_config["INT4_ENABLED"] else 1)
-            # size_per_streaming_token = self.num_streaming_kv_heads * self.head_dim * (1 if self.use_int8 else 2) // (2 if self.kv_cache_config["INT4_ENABLED"] else 1)
+
+            # Apply QK normalization before RoPE (Qwen3)
+            if self.qk_norm:
+                q = self.q_norm(q)
+                k = self.k_norm(k)
 
             attn_output, dynamic_sparse_page_idx_to_cache = self.decoding_attention_wrapper(
                 q, k, v,

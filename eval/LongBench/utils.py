@@ -10,6 +10,10 @@ def add_lbench_args(parser):
     parser.add_argument("--task", type=str, help="task name", required=True)
     parser.add_argument("--method", type=str, default="full")
     parser.add_argument("--model_name_suffix", type=str, default=None, help="name of model")
+    parser.add_argument("--enable-thinking", action="store_true", default=False,
+                        help="Enable Qwen3 thinking mode (default: off)")
+    parser.add_argument("--max-samples", type=int, default=0,
+                        help="Max samples per task (0 = all). Useful for quick testing.")
 
 
 # for lServe
@@ -42,9 +46,13 @@ BG_GREEN = "\033[42m"
 BG_PINK = "\033[45m"
 RESET = "\033[0m"
 
+_global_request_id = 0
+
 def process_requests(engine: LLMEngine, test_prompts: List[str], stop_token_ids, max_gen_length: int=512):
     """Continuously process a list of prompts and handle the outputs."""
-    request_id = 0
+    global _global_request_id
+    request_id_start = _global_request_id
+    request_id = _global_request_id
     sampling_params = SamplingParams(
         temperature=0.0, top_p=1.0, stop_token_ids=stop_token_ids, max_tokens=max_gen_length
     )
@@ -55,7 +63,8 @@ def process_requests(engine: LLMEngine, test_prompts: List[str], stop_token_ids,
             succeeded = engine.add_request(str(request_id), prompt, sampling_params)
             if succeeded:
                 request_id += 1
-                print(f"Added request {request_id}")
+            else:
+                pass
         num_test_prompts = request_id
 
         if not test_prompts:
@@ -76,10 +85,10 @@ def process_requests(engine: LLMEngine, test_prompts: List[str], stop_token_ids,
     iter = 1
     finished = 0
     outputs = {}
+    import sys
     while engine.has_unfinished_requests():
         ### Schedule iteration 1 (context stage)
         requests_outputs = engine.step()
-        # print(f"Requests outputs: {requests_outputs}")
         if len(requests_outputs) == 0:
             break
         # print(
@@ -94,7 +103,6 @@ def process_requests(engine: LLMEngine, test_prompts: List[str], stop_token_ids,
             if request_output["finished"]:
                 finished += 1
                 outputs[request_output['id']] = request_output['text']
-                print(f"{BG_GREEN}[Conversation {request_output['id']} output]{RESET} {request_output['text']}")
                 # print(
                 #     f"{BG_GREEN}[Conversation {request_output['id']} output]{RESET} {request_output['text']}"
                 # )
@@ -106,12 +114,17 @@ def process_requests(engine: LLMEngine, test_prompts: List[str], stop_token_ids,
                     #     f"{BG_GREEN}[Conversation {request_output['id']} output]{RESET} {request_output['tokens']}"
                     # )
                 break
-    assert num_test_prompts == finished
-    
-    # outputs = []
-    # for request_output in requests_outputs:
-    #     outputs.append(request_output['text'])
-    return outputs
-    
-    print(f"{BG_PINK}{finished} requests are finished.{RESET}")
+    assert num_test_prompts - request_id_start == finished
+    _global_request_id = request_id
+
+    # Remap to 0-based index for caller
+    result = {}
+    for i in range(finished):
+        key = request_id_start + i
+        # Engine may return id as int or str
+        if key in outputs:
+            result[i] = outputs[key]
+        elif str(key) in outputs:
+            result[i] = outputs[str(key)]
+    return result
 

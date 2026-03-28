@@ -150,11 +150,8 @@ class LLMEngine:
         # Create the scheduler.
         self.scheduler = Scheduler(scheduler_config, cache_config, ifb_config)
 
-        if self.ifb_mode:
-            print("Running with ifb mode")
-        else:
+        if not self.ifb_mode:
             self.block_table_initialized = False
-            print("Running without ifb mode")
 
         if self.benchmarking_mode:
             print("Running with benchmarking mode")
@@ -333,7 +330,6 @@ class LLMEngine:
                 prompt_token_ids=prompt_token_ids,
             )
             prompt_len = len(prompt_token_ids)
-            print(f"prompt_len: {prompt_len}")
         else:
             # profiling mode
             prompt_len = profiling_config.prompt_len

@@ -93,12 +93,9 @@ class BaseCacheEngine:
             assert kv_cache_config[
                 "ZEROS_ENABLED"
             ], "INT4 KV Cache must be used with Zero Points."
-            print("[INFO] USE INT4 w/ ZERO_POINTS for KV CACHE")
+            pass  # INT4 w/ ZERO_POINTS
         else:
-            # assert kv_cache_config[
-            #     "ZEROS_ENABLED"
-            # ], "INT8 KV Cache must be used with Zero Points."
-            print("[INFO] USE INT8 for KV CACHE")
+            pass  # INT8 KV cache
         self.gpu_cache = self.allocate_gpu_cache()
         self.cpu_cache = self.allocate_cpu_cache()
 

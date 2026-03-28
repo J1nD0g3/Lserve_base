@@ -16,7 +16,8 @@ selector_update_interval=${11}
 sub_chunk_per_block=${12}
 
 device=${13}
-
+enable_thinking=${14}
+max_samples=${15}
 
 ctx_sink_token=128
 ctx_local_token=4096
@@ -27,12 +28,24 @@ ckpt_name=$(basename "$model_path")
 
 suffix=sparse_prefill_${sparse_prefill_mode}_${precision}_sparsity${static_sparsity}_decMode${sparse_decode_mode}_tokenBudget${dynamic_sparse_token_budget}_interval${selector_update_interval}
 
+thinking_arg=""
+if [ "$enable_thinking" == "1" ]; then
+    thinking_arg="--enable-thinking"
+fi
+
+max_samples_arg=""
+if [ -n "$max_samples" ] && [ "$max_samples" -gt 0 ] 2>/dev/null; then
+    max_samples_arg="--max-samples $max_samples"
+fi
+
 longbench_args="--base_model $base_model \
                 --quant_model $ckpt_name \
                 --model_path $model_path \
                 --task $task \
                 --sparse_prefill_mode $sparse_prefill_mode \
-                --model_name_suffix $suffix"
+                --model_name_suffix $suffix \
+                $thinking_arg \
+                $max_samples_arg"
 
 
 lserve_args="--ifb-mode \

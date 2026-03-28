@@ -11,7 +11,7 @@ def get_named_linears(module):
 
 
 def get_blocks(model):
-    if model.__class__.__name__ == "LlamaForCausalLM":
+    if model.__class__.__name__ in ("LlamaForCausalLM", "Qwen3ForCausalLM"):
         layers = model.model.layers
     elif model.__class__.__name__ == "LlavaLlamaForCausalLM":
         # layers = [model.model.layers, model.model.vision_tower.vision_tower.vision_model.encoder.layers]

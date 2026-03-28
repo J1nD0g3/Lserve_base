@@ -1,9 +1,12 @@
 from typing import Optional, Union
 import os
+import logging
 import torch
 import numpy as np
 import json
 from einops import repeat
+
+logger = logging.getLogger(__name__)
 
 
 class CtxAttnConfig:
@@ -133,7 +136,7 @@ class SpAttnConfig:
 
             full_attention_heads = (full_attention_heads >= threshold).astype(float)
             actual_sparsity = 1 - np.mean(full_attention_heads)
-            print(f"actual sparsity: {actual_sparsity}")
+            logger.info(f"actual sparsity: {actual_sparsity}")
             return full_attention_heads
 
     

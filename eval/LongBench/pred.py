@@ -1,4 +1,7 @@
 import os
+import re
+import sys
+import warnings
 from datasets import load_dataset
 import torch
 import json
@@ -11,17 +14,28 @@ from tqdm import tqdm
 import numpy as np
 import random
 import argparse
+
+# Suppress engine init noise from stdout — redirect to stderr during import & init
+warnings.filterwarnings("ignore")
+import logging
+logging.disable(logging.WARNING)
+
 from utils import add_lbench_args, initialize_engine, process_requests
 
 
 # This is the customized building prompt for chat models
-def build_chat(tokenizer, prompt, model_name):
+def build_chat(tokenizer, prompt, model_name, enable_thinking=False):
     if "llama-2" in model_name:
         prompt = f"[INST]{prompt}[/INST]"
+    elif "qwen3" in model_name.lower() or "Qwen3" in model_name:
+        if enable_thinking:
+            prompt = f"<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n<think>\n"
+        else:
+            prompt = f"<|im_start|>user\n{prompt}\n/no_think<|im_end|>\n<|im_start|>assistant\n"
     return prompt
 
 
-def post_process(response, model_name):
+def post_process(response, model_name, enable_thinking=False):
     if "xgen" in model_name:
         response = response.strip().replace("Assistant:", "")
     elif "internlm" in model_name:
@@ -41,6 +55,15 @@ def post_process(response, model_name):
             .split("(Passage")[0]
             .strip()
         )
+    elif "qwen3" in model_name.lower() or "Qwen3" in model_name:
+        # Strip <think>...</think> block (always, in case model still produces it)
+        response = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL).strip()
+        response = (
+            response.split("<|im_end|>")[0]
+            .split("<|endoftext|>")[0]
+            .split("\n\nQuestion")[0]
+            .strip()
+        )
     return response
 
 
@@ -54,12 +77,11 @@ def get_pred(
     prompt_format,
     dataset,
     base_model_name,
-    # decoding_simulation_length, # FIXME (Shang): What is this for? Seems like useless. Not sure if it is for duo-attention
+    enable_thinking=False,
+    pbar=None,
 ):
     preds = []
-    pbar = tqdm(data)
-    prompts = []
-    for idx, json_obj in enumerate(pbar):
+    for idx, json_obj in enumerate(data):
         prompt = prompt_format.format(**json_obj)
         # truncate to fit max_length (we suggest truncate in the middle, since the left and right side may contain crucial instructions)
         tokenized_prompt = tokenizer(
@@ -78,18 +100,13 @@ def get_pred(
             "lcc",
             "repobench-p",
         ]:  # chat models are better off without build prompts on these tasks
-            prompt = build_chat(tokenizer, prompt, base_model_name)
-        
-        prompts.append(prompt)
-        # break   # Only add one prompt for DEBUGGINg
+            prompt = build_chat(tokenizer, prompt, base_model_name, enable_thinking)
 
-    # NOTE (Shang): Fix by adding eos_token_ids
-    outputs = process_requests(lserve_engine, prompts, eos_token_ids, max_gen)
-
-    for idx, json_obj in enumerate(pbar):
-        pred = outputs[idx]
+        # NOTE (Shang): Fix by adding eos_token_ids
+        outputs = process_requests(lserve_engine, [prompt], eos_token_ids, max_gen)
+        pred = outputs[0]
         pred = pred.replace("<|eot_id|>", "")
-        pred = post_process(pred, base_model_name)
+        pred = post_process(pred, base_model_name, enable_thinking)
         preds.append(
             {
                 "pred": pred,
@@ -98,6 +115,8 @@ def get_pred(
                 "length": json_obj["length"],
             }
         )
+        if pbar is not None:
+            pbar.update(1)
     return preds
 
 
@@ -155,10 +174,7 @@ if __name__ == "__main__":
             "repobench-p",
         ]
     else:
-        print(f"args.task: {args.task}")
-        tasks = args.task.split("+")
-        print(f"tasks: {tasks}")
-        datasets = tasks
+        datasets = args.task.split("+")
     # we design specific prompt format and max generation length for each task, feel free to modify them to optimize model output
     dataset2prompt = json.load(open("./config/dataset2prompt.json", "r"))
     dataset2maxlen = json.load(open("./config/dataset2maxlen.json", "r"))
@@ -167,18 +183,22 @@ if __name__ == "__main__":
         os.makedirs("./pred")
     if not os.path.exists("./pred_e"):
         os.makedirs("./pred_e")
+    import time
+    # Suppress datasets library cache messages
+    logging.getLogger("datasets").setLevel(logging.ERROR)
     for dataset in datasets:
         data = load_dataset("THUDM/LongBench", dataset, split="test")
-        if not os.path.exists(f"./pred/{quant_model_name}"):
-            os.makedirs(f"./pred/{quant_model_name}")
+        if args.max_samples > 0:
+            data = data.select(range(min(args.max_samples, len(data))))
+        os.makedirs(f"./pred/{quant_model_name}", exist_ok=True)
         out_path = f"./pred/{quant_model_name}/{dataset}-{args.model_name_suffix}.jsonl"
         if os.path.exists(out_path):
-            print(f"{out_path} already exists, skipping...")
             continue
         prompt_format = dataset2prompt[dataset]
         max_gen = dataset2maxlen[dataset]
-        
-        
+
+        t0 = time.time()
+        pbar = tqdm(total=len(data), desc=f"Running longbench/{dataset}", dynamic_ncols=True, file=sys.stdout)
         preds = get_pred(
             lserve_engine,
             tokenizer,
@@ -189,7 +209,13 @@ if __name__ == "__main__":
             prompt_format,
             dataset,
             base_model_name,
+            enable_thinking=args.enable_thinking,
+            pbar=pbar,
         )
+        pbar.close()
+        elapsed = time.time() - t0
+        print(f"  {dataset}: {len(data)} samples, {elapsed:.1f}s")
+
         with open(out_path, "w", encoding="utf-8") as f:
             for pred in preds:
                 json.dump(pred, f, ensure_ascii=False)

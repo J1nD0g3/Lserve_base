@@ -100,9 +100,8 @@ class ModelRunner:
         # Note: Shang's important fix here. Otherwise non-GEMM part will run in FP32.
         model_type = model_config.hf_config.architectures[0]
 
-        if model_type == "LlamaForCausalLM" or model_type == "MistralForCausalLM":
+        if model_type in ("LlamaForCausalLM", "MistralForCausalLM", "Qwen3ForCausalLM"):
             if "w4a8" in precision:
-                print(f"[INFO] Using {precision} precision")
                 self.model = (
                     LlamaForCausalLMW4A8(
                         self.model_config.hf_config,
@@ -118,7 +117,6 @@ class ModelRunner:
                     .to(self.device)
                 )
             elif "w8a8" in precision:
-                print(f"[INFO] Using {precision} precision")
                 self.model = (
                     LlamaForCausalLMW8A8(
                         self.model_config.hf_config,
@@ -133,7 +131,6 @@ class ModelRunner:
                     .to(self.device)
                 )
             elif "w16a16" in precision:
-                print(f"[INFO] Using {precision} precision")
                 self.model = (
                     LlamaForCausalLMW16A16(
                         self.model_config.hf_config,
@@ -153,7 +150,6 @@ class ModelRunner:
                 )
         elif model_type == "MixtralForCausalLM":
             if "w4a8" in precision:
-                print(f"[INFO] Using {precision} precision")
                 self.model = (
                     MixtralForCausalLMW4A8(
                         self.model_config.hf_config,
