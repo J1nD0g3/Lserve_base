@@ -82,9 +82,15 @@ else
 fi
 conda activate omniserve
 
-# Install CUDA toolkit via conda (provides nvcc for kernel compilation)
-echo "  -> Installing CUDA toolkit via conda..."
-conda install -c nvidia cuda-toolkit -y
+# Use system CUDA (must match PyTorch's CUDA version family, i.e. 12.x)
+# Do NOT install cuda-toolkit via conda as it may install a newer version
+# (e.g. 13.2) that mismatches PyTorch's CUDA 12.1.
+export CUDA_HOME=/usr/local/cuda
+export PATH=/usr/local/cuda/bin:$PATH
+export CC=/usr/bin/gcc
+export CXX=/usr/bin/g++
+echo "  -> Using system CUDA: $(nvcc -V 2>&1 | grep release)"
+echo "  -> Using system GCC: $(gcc --version | head -1)"
 
 # ---------------------------------------------------------
 # Step 2: Install OmniServe + Python dependencies
@@ -160,10 +166,19 @@ if [ -d "$MODEL_DIR" ] && [ "$(ls -A "$MODEL_DIR" 2>/dev/null)" ]; then
 else
     echo "  -> Base model: $QWEN3_128K_DIR"
 
-    # Install DeepCompressor
+    # Install DeepCompressor (not on PyPI, install from GitHub)
     if ! python -c "import deepcompressor" 2>/dev/null; then
-        echo "  -> Installing DeepCompressor..."
-        pip install deepcompressor
+        echo "  -> Installing DeepCompressor from GitHub..."
+        pip install image-reward poetry-core av
+        cd /tmp && rm -rf deepcompressor
+        git clone https://github.com/mit-han-lab/deepcompressor.git --depth 1
+        # Fix: upstream uses 'pyav' but the actual package name is 'av'
+        sed -i 's/pyav = ">= 13.0.0"/av = ">= 13.0.0"/' /tmp/deepcompressor/pyproject.toml
+        pip install -e /tmp/deepcompressor --no-build-isolation
+        # Restore pinned versions that deepcompressor may have upgraded
+        pip install torch==2.2.0 torchvision==0.17.0 torchaudio==2.2.0 --index-url https://download.pytorch.org/whl/cu121
+        pip install numpy==1.26.0 transformers==4.37.2 lm_eval==0.3.0 xformers==0.0.24
+        cd "${OMNISERVE_DIR}"
     else
         echo "  -> DeepCompressor already installed."
     fi

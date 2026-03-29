@@ -158,6 +158,12 @@ class LlamaAttention(nn.Module):
         num_kv_heads = args.num_key_value_heads
         rope_theta = getattr(args, "rope_theta", 10000)
         rope_scaling = getattr(args, "rope_scaling", None)
+        # YaRN RoPE is not supported by the CUDA kernel (only linear scaling).
+        # Disable the scaling factor for YaRN models so the kernel uses factor=1.0.
+        # At short context (<original_max_pos), this is equivalent to no scaling.
+        # For long context, a proper YaRN kernel implementation would be needed.
+        if rope_scaling is not None and rope_scaling.get("type") == "yarn":
+            rope_scaling = None
         max_position_embeddings = args.max_position_embeddings
 
         self.layer_idx = layer_idx

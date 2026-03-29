@@ -40,6 +40,7 @@ from transformers import LlamaConfig
 
 import omniserve.utils.constants
 from omniserve.modeling.layers.activation import SiluAndMul
+from omniserve.modeling.models.llama_w8a8_unpad import QKRMSNorm
 from omniserve.modeling.layers.layernorm import RMSNorm, RMSNormGeneral
 from omniserve.modeling.layers.sampler import Sampler
 from omniserve.modeling.layers.ctx_update_kv import ApplyBiasRopeUpdateKVCacheWrapper, PagedMinMaxPoolWrapper
@@ -101,6 +102,10 @@ class LlamaAttention(nn.Module):
         num_kv_heads = args.num_key_value_heads
         rope_theta = getattr(args, "rope_theta", 10000)
         rope_scaling = getattr(args, "rope_scaling", None)
+        # YaRN RoPE is not supported by the CUDA kernel (only linear scaling).
+        # Disable the scaling factor for YaRN models so the kernel uses factor=1.0.
+        if rope_scaling is not None and rope_scaling.get("type") == "yarn":
+            rope_scaling = None
         max_position_embeddings = args.max_position_embeddings
 
         self.layer_idx = layer_idx
@@ -154,9 +159,13 @@ class LlamaAttention(nn.Module):
             bias=attention_bias,
         )
         self.kv_scale_quant_orig = nn.Parameter(torch.ones(2))
-        self.kv_max_seq_len = min(max_seq_len, self.max_position_embeddings)
 
-        # self.invoke_quant = self.invoke_quant_wo_act_sum
+        # Qwen3 QK normalization support
+        self.qk_norm = getattr(args, "qk_norm", False) or getattr(args, "model_type", "") == "qwen3"
+        if self.qk_norm:
+            self.q_norm = QKRMSNorm(self.head_dim)
+            self.k_norm = QKRMSNorm(self.head_dim)
+        self.kv_max_seq_len = min(max_seq_len, self.max_position_embeddings)
 
 
         self.tokens_per_block = 64                                                                          # TODO: This should be a parameter
@@ -223,8 +232,15 @@ class LlamaAttention(nn.Module):
             kv_scale_quant_orig = self.kv_scale_quant_orig.float()
             kv_scale_orig_quant = 1 / kv_scale_quant_orig
 
+            # Apply QK normalization before RoPE (Qwen3)
+            if self.qk_norm:
+                q_part = qkv[:, :self.q_size].reshape(-1, self.total_num_heads, self.head_dim)
+                qkv[:, :self.q_size] = self.q_norm(q_part).reshape(-1, self.q_size)
+                k_part = qkv[:, self.q_size:self.q_size + self.kv_size].reshape(-1, self.num_kv_heads, self.head_dim)
+                qkv[:, self.q_size:self.q_size + self.kv_size] = self.k_norm(k_part).reshape(-1, self.kv_size)
+
             self.apply_bias_rope_update_kv_cache_wrapper(
-                qkv, input_metadata, 
+                qkv, input_metadata,
                 self.retrieval_head_flags, self.head_rank_table,
                 self.sink_size, self.local_size, self.sink_blocks, self.local_blocks,
                 self.num_retrieval_kv_heads, self.num_streaming_kv_heads,
@@ -263,12 +279,11 @@ class LlamaAttention(nn.Module):
             q = q.reshape(q.size(0), self.total_num_heads, self.head_dim)
             k = k.reshape(k.size(0), self.num_kv_heads, self.head_dim)
             v = v.reshape(v.size(0), self.num_kv_heads, self.head_dim)
-            # alibi_slopes = None
-            # memory_max_len = self.kv_max_seq_len
-            # tokens_per_block = 64
-            
-            # size_per_retrieval_token = self.num_retrieval_kv_heads * self.head_dim * (1 if self.use_int8 else 2) // (2 if self.kv_cache_config["INT4_ENABLED"] else 1)
-            # size_per_streaming_token = self.num_streaming_kv_heads * self.head_dim * (1 if self.use_int8 else 2) // (2 if self.kv_cache_config["INT4_ENABLED"] else 1)
+
+            # Apply QK normalization before RoPE (Qwen3)
+            if self.qk_norm:
+                q = self.q_norm(q)
+                k = self.k_norm(k)
 
             attn_output, dynamic_sparse_page_idx_to_cache = self.decoding_attention_wrapper(
                 q, k, v,

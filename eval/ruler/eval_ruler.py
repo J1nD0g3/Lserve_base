@@ -138,9 +138,11 @@ def generate_with_lserve(engine, prompts, stop_token_ids, max_gen_len):
     return result
 
 
-def evaluate_task(engine, tokenizer, stop_token_ids, data_dir, task_name, output_dir, enable_thinking=False):
+def evaluate_task(engine, tokenizer, stop_token_ids, data_dir, task_name, output_dir, enable_thinking=False, max_samples=0):
     """Evaluate a single RULER task."""
     samples = load_ruler_data(data_dir, task_name)
+    if max_samples > 0:
+        samples = samples[:max_samples]
     gen_len = get_gen_len(task_name)
 
     print(f"\n{'='*60}")
@@ -179,13 +181,18 @@ def evaluate_task(engine, tokenizer, stop_token_ids, data_dir, task_name, output
         prediction = postprocess_pred(prediction)
 
 
+        # Debug: log first 5 samples per task
+        if i < 5:
+            print(f"\n[DEBUG] Sample {i}: raw_pred={repr(raw_prediction[:200])}")
+            print(f"[DEBUG] Sample {i}: pred={repr(prediction[:200])}")
+            print(f"[DEBUG] Sample {i}: gt={ground_truth}")
+
         # Compute score
         score = compute_ruler_score(prediction, ground_truth, task_name)
 
         # Track token lengths
-        input_tokens = tokenizer(prompt, return_tensors="pt").input_ids[0]
-        input_len = len(input_tokens)
-        output_len = len(tokenizer(prediction, return_tensors="pt").input_ids[0]) if prediction else 0
+        input_len = len(tokenizer.encode(prompt))
+        output_len = len(tokenizer.encode(prediction)) if prediction else 0
 
         scores.append(score)
         input_lens.append(input_len)
@@ -347,6 +354,8 @@ def main():
     parser.add_argument("--sub_chunk_per_block", type=int, default=4)
     parser.add_argument("--enable-thinking", action="store_true", default=False,
                         help="Enable Qwen3 thinking mode (default: off)")
+    parser.add_argument("--max_samples", type=int, default=0,
+                        help="Max samples per task (0 = all)")
 
     args, _ = parser.parse_known_args()
 
@@ -376,6 +385,7 @@ def main():
             engine, tokenizer, stop_token_ids,
             args.data_dir, task_name, args.output_dir,
             enable_thinking=args.enable_thinking,
+            max_samples=args.max_samples,
         )
         all_stats.append(stats)
 

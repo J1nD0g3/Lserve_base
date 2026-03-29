@@ -149,6 +149,8 @@ class LlamaAttention(nn.Module):
         num_kv_heads = args.num_key_value_heads
         rope_theta = getattr(args, "rope_theta", 10000)
         rope_scaling = getattr(args, "rope_scaling", None)
+        if rope_scaling is not None and rope_scaling.get("type") == "yarn":
+            rope_scaling = None
         max_position_embeddings = args.max_position_embeddings
 
         self.layer_idx = layer_idx

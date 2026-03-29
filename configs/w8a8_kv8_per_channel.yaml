@@ -1,0 +1,87 @@
+seed: 12345
+save_model: "true"
+skip_eval: true
+cache:
+  root: runs
+output:
+  root: /root/Lserve_base/quant_output
+  dirname: Qwen3-8B-128k-w8a8
+model:
+  name: Qwen3-8B-128k
+  path: /root/models/Qwen3-8B-128k
+  root: ''
+  local_path: null
+  local_root: ''
+  dtype: torch.float16
+quant:
+  calib:
+    data: pileval
+    path: mit-han-lab/pile-val-backup
+    num_samples: 128
+    seq_length: 512
+    min_seq_length: 0
+    max_seq_length: 0
+  develop_dtype: torch.float32
+  wgts:
+    dtype: sint8
+    group_shapes:
+    - - 1
+      - -1
+    scale_dtypes:
+    - null
+    enable_calib_range: true
+    calib_range:
+      objective: OutputsError
+      strategy: Manual
+      granularity: Group
+      degree: 2
+      element_batch_size: 64
+      sample_batch_size: -1
+      element_size: 512
+      sample_size: -1
+      pre_reshape: true
+      outputs_device: cpu
+  ipts:
+    static: false
+    dtype: sint8
+    group_shapes:
+    - - 1
+      - -1
+    scale_dtypes:
+    - null
+  opts:
+    static: true
+    dtype: sint8
+    group_shapes:
+    - - -1
+      - -1
+    scale_dtypes:
+    - null
+    enable_calib_range: true
+    calib_range:
+      objective: OutputsError
+      strategy: Manual
+      granularity: Layer
+      degree: 2
+      element_batch_size: -1
+      sample_batch_size: -1
+      element_size: -1
+      sample_size: -1
+      pre_reshape: true
+      outputs_device: cpu
+  enable_smooth: true
+  smooth:
+    enable_proj: true
+    proj:
+      objective: OutputsError
+      strategy: Manual
+      granularity: Layer
+      spans:
+      - - AbsMax
+        - AbsMax
+      alpha: 0.85
+      beta: 0.15
+      skips:
+      - out_proj
+      - down_proj
+    enable_attn: false
