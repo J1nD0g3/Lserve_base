@@ -158,7 +158,10 @@ def profile_attention_heads(model, tokenizer, args):
             for kv_idx, score in scores.items():
                 head_scores[lidx, kv_idx] += score
 
+        del sample_scores
+        import gc; gc.collect()
         torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats()
         mem_gb = torch.cuda.max_memory_allocated() / 1024**3
         print(f"  Done (peak GPU: {mem_gb:.1f}GB)")
 
@@ -213,7 +216,7 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(
         args.model_path,
         torch_dtype=dtype,
-        device_map="auto",
+        device_map="cuda:0",   # single GPU: hooks must see ALL layers on one device
         trust_remote_code=True,
         attn_implementation="eager",
     )
