@@ -207,6 +207,8 @@ def main():
     parser.add_argument("--sink_size", type=int, default=128)
     parser.add_argument("--local_size", type=int, default=256)
     parser.add_argument("--dtype", type=str, default="bfloat16", choices=["float16", "bfloat16"])
+    parser.add_argument("--device_map", type=str, default="cuda:0",
+                        help="'cuda:0'=single GPU, 'auto'=multi-GPU layer split")
     args = parser.parse_args()
 
     dtype = torch.bfloat16 if args.dtype == "bfloat16" else torch.float16
@@ -216,7 +218,7 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(
         args.model_path,
         torch_dtype=dtype,
-        device_map="cuda:0",   # single GPU: hooks must see ALL layers on one device
+        device_map=args.device_map,   # "cuda:0"=single, "auto"=multi-GPU (NO max_memory: it caused NaN)
         trust_remote_code=True,
         attn_implementation="eager",
     )
