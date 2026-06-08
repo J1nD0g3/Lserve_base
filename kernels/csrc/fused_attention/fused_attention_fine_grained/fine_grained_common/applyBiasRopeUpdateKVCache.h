@@ -574,7 +574,8 @@ void kernelDispatchHeadSize(T *QKV, T *Q, RetrievalKVCacheBuffer &retrieval_kvTa
     const bool store_contiguous_qkv = true; //! enable_paged_kv_fmha;
 
     // Update scale if scale_type == RotaryScalingType::kLINEAR.
-    const float updated_rotary_embedding_scale = rotary_scale_type == RotaryScalingType::kLINEAR ? 1.0f / rotary_embedding_scale : rotary_embedding_scale;
+    // Negative scale encodes YaRN (see rotary_embedding_coefficient); pass through unchanged.
+    const float updated_rotary_embedding_scale = (rotary_scale_type == RotaryScalingType::kLINEAR && rotary_embedding_scale > 0.f) ? 1.0f / rotary_embedding_scale : rotary_embedding_scale;
 
     if (add_bias)
     {

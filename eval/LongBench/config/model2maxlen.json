@@ -11,5 +11,6 @@
     "Mistral-7B-Instruct-v0.2": 31500,
     "Llama-3-8B-Instruct-Gradient-1048k": 1047500,
     "Qwen3-8B": 31500,
-    "Qwen3-8B-128k": 127500
+    "Qwen3-8B-128k": 127500,
+    "Qwen3-14B": 31500
 }

@@ -102,10 +102,17 @@ class LlamaAttention(nn.Module):
         num_kv_heads = args.num_key_value_heads
         rope_theta = getattr(args, "rope_theta", 10000)
         rope_scaling = getattr(args, "rope_scaling", None)
-        # YaRN RoPE is not supported by the CUDA kernel (only linear scaling).
-        # Disable the scaling factor for YaRN models so the kernel uses factor=1.0.
-        if rope_scaling is not None and rope_scaling.get("type") == "yarn":
-            rope_scaling = None
+        # YaRN: the kernel implements NTK-by-parts in rotary_embedding_coefficient
+        # (decoderMaskedMultiheadAttentionUtils.h), selected by a NEGATIVE factor
+        # encoding -(original_max_position_embeddings + factor / 64).
+        if rope_scaling is not None and (rope_scaling.get("type") or rope_scaling.get("rope_type")) == "yarn":
+            yarn_factor = float(rope_scaling["factor"])
+            orig_max = rope_scaling.get("original_max_position_embeddings")
+            if orig_max is None:
+                orig_max = int(round(args.max_position_embeddings / yarn_factor))
+            assert yarn_factor * 64 == int(yarn_factor * 64), \
+                "yarn factor must be a multiple of 1/64 for the kernel sign-encoding"
+            rope_scaling = {"type": "yarn", "factor": -(float(orig_max) + yarn_factor / 64.0)}
         max_position_embeddings = args.max_position_embeddings
 
         self.layer_idx = layer_idx

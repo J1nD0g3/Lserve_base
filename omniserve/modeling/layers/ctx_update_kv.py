@@ -29,6 +29,9 @@ class ApplyBiasRopeUpdateKVCacheWrapper(torch.nn.Module):
             assert self.rope_scaling["type"] in ("linear", "yarn"), f"Unsupported rope scaling type {self.rope_scaling['type']}"
         else:
             self.rope_scaling_factor = 1.0
+        import os as _os
+        if _os.environ.get("LSERVE_ROPE_DEBUG") == "1" and layer_idx == 0:
+            print(f"[rope-debug][ctx] layer0 theta={rope_theta} scale_factor={self.rope_scaling_factor} max_pos={max_position_embeddings}", flush=True)
         self.max_position_embeddings = max_position_embeddings
         self.neox_rotary_style = neox_rotary_style
         self.kv_quant_granularity = kv_quant_granularity

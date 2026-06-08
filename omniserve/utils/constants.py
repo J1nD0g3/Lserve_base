@@ -12,7 +12,7 @@
 
 def init():
     global max_seq_len
-    max_seq_len = 65536#8192
+    max_seq_len = 131072  # 65536#8192 — raised for Qwen3-14B-128k (YaRN) runs
 
 
 init()

@@ -1145,13 +1145,48 @@ namespace mmha
         }
         else if (scale_type == RotaryScalingType::kLINEAR)
         {
-            scale = 1.0f / scale;
+            // Negative scale encodes YaRN (see rotary_embedding_coefficient); pass through unchanged.
+            if (scale > 0.f)
+            {
+                scale = 1.0f / scale;
+            }
         }
     }
 
     inline __device__ float2 rotary_embedding_coefficient(
         const int zid, const int rot_embed_dim, const float base, const float scale, const float t_step)
     {
+        if (scale < 0.f)
+        {
+            // YaRN (NTK-by-parts) rope scaling, matching HF transformers _compute_yarn_parameters.
+            // Python encodes scale = -(original_max_position_embeddings + factor / 64)
+            // (factor must be a multiple of 1/64; orig_max_pos an integer).
+            const float enc = -scale;
+            const float orig_max = floorf(enc);
+            const float factor = (enc - orig_max) * 64.f;
+            const float d = (float)rot_embed_dim;
+            const float ln_base = __logf(base);
+            // correction dims (pair-index space, beta_fast=32, beta_slow=1)
+            const float two_pi = 6.283185307179586f;
+            float low = floorf(d * __logf(orig_max / (32.f * two_pi)) / (2.f * ln_base));
+            float high = ceilf(d * __logf(orig_max / (1.f * two_pi)) / (2.f * ln_base));
+            low = fmaxf(low, 0.f);
+            high = fminf(high, d * 0.5f - 1.f);
+            const float pair_idx = zid * 0.5f;
+            float ramp = (pair_idx - low) / fmaxf(high - low, 0.001f);
+            ramp = fminf(fmaxf(ramp, 0.f), 1.f);
+            const float extrap = 1.f - ramp; // 1 -> high-freq dims (no interpolation), 0 -> low-freq (/factor)
+            // Compute the angle in double and reduce mod 2*pi BEFORE cos/sin:
+            // with --use_fast_math, cosf/sinf lose all precision for large arguments
+            // (t_step up to 131072), which corrupts long-range retrieval.
+            const double theta_d = 1.0 / pow((double)base, (double)zid / (double)d);
+            const double inv_freq_d = theta_d * ((double)extrap + (1.0 - (double)extrap) / (double)factor);
+            const double angle_d = (double)t_step * inv_freq_d;
+            const double two_pi_d = 6.283185307179586;
+            const float angle = (float)(angle_d - two_pi_d * floor(angle_d / two_pi_d));
+            const float mscale = 0.1f * __logf(factor) + 1.f; // yarn attention scaling
+            return {cos(angle) * mscale, sin(angle) * mscale};
+        }
         const float inv_freq = (t_step * scale) / pow(base, zid / (float)rot_embed_dim);
         return {cos(inv_freq), sin(inv_freq)};
     }
