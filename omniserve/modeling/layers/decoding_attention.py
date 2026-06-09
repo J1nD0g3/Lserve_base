@@ -82,7 +82,11 @@ class DecodingAttentionWrapper(torch.nn.Module):
                     # ignores rope_scaling_factor (breaks YaRN). Route through the
                     # wo_dynamic_sparse kernel, which is identical full attention when all
                     # heads are retrieval heads (static_sparsity=0.0).
-                    self.forward = self.forward_wo_dynamic_sparse_fine_grained
+                    # LSERVE_FG_PUREDENSE=1 reverts to the pre-ca18c72 pure_dense path (regression test).
+                    if os.environ.get("LSERVE_FG_PUREDENSE") == "1":
+                        self.forward = self.forward_pure_dense
+                    else:
+                        self.forward = self.forward_wo_dynamic_sparse_fine_grained
                 elif kv_quant_granularity == "per_tensor":
                     # raise NotImplementedError("per_tensor kv_quant_granularity is not supported for pure dense attention")
                     self.forward = self.forward_wo_dynamic_sparse_per_tensor    # NOTE: Per_tensor pure dense is has not been implemented yet. Just use the forward_wo_dynamic_sparse_per_tensor sparse for now.

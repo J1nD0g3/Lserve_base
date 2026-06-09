@@ -44,10 +44,27 @@ torch.nn.init.normal_ = skip
 
 
 def get_calib_data(tokenizer, num_samples=32, seq_len=2048):
-    """Generate calibration data from random wiki-like text."""
-    # Use the tokenizer's vocab to create pseudo-random calibration sequences
-    np.random.seed(42)
+    """Calibration data from REAL text (LongBench-v2 contexts) — matches the eval
+    distribution. Random-token calibration gives unrealistic activations and bad
+    KV/weight scales (caused garbage decode); real text fixes this."""
     calib_data = []
+    try:
+        from datasets import load_dataset
+        ds = load_dataset("THUDM/LongBench-v2", split="train")
+        n = min(num_samples, len(ds))
+        for i in range(n):
+            ctx = ds[i]["context"]
+            ids = tokenizer.encode(ctx, add_special_tokens=False)
+            if len(ids) < 64:
+                continue
+            ids = ids[:seq_len]
+            calib_data.append(torch.tensor(ids, dtype=torch.long).unsqueeze(0))
+        if calib_data:
+            print(f"[calib] using {len(calib_data)} real LongBench-v2 contexts (seq_len<= {seq_len})")
+            return calib_data
+    except Exception as e:
+        print(f"[calib] LongBench-v2 load failed ({e}); falling back to random")
+    np.random.seed(42)
     vocab_size = tokenizer.vocab_size
     for _ in range(num_samples):
         ids = np.random.randint(100, vocab_size, size=seq_len)
@@ -77,29 +94,28 @@ def collect_kv_scales(model, tokenizer, num_samples=32, seq_len=512):
     k_maxes = [0.0] * num_layers
     v_maxes = [0.0] * num_layers
 
-    # Hook to capture KV values
+    # Hook the K/V tensors that actually get cached. The old hook read attn
+    # output[2] (past_key_value), which Qwen3 in transformers>=4.5x does NOT
+    # populate -> ranges stayed 0.0 -> kv_scale_quant_orig=[0,0] -> per_tensor
+    # decode divides by zero -> garbage. Instead capture K AFTER k_norm (Qwen3
+    # QK-norm; captures the extreme k_norm outlier channels) and V at v_proj out.
     hooks = []
-    kv_stats = {}
 
-    def make_kv_hook(layer_idx):
-        def hook_fn(module, input, output):
-            # For Qwen3/Llama attention, we need to capture K and V after projection
-            # output = (attn_output, attn_weights, past_key_value)
-            # But with use_cache=True, past_key_value has K and V
-            if isinstance(output, tuple) and len(output) >= 3 and output[2] is not None:
-                past_kv = output[2]
-                if hasattr(past_kv, 'key_cache') and hasattr(past_kv, 'value_cache'):
-                    # DynamicCache
-                    if len(past_kv.key_cache) > layer_idx:
-                        k = past_kv.key_cache[layer_idx]
-                        v = past_kv.value_cache[layer_idx]
-                        k_maxes[layer_idx] = max(k_maxes[layer_idx], k.abs().max().item())
-                        v_maxes[layer_idx] = max(v_maxes[layer_idx], v.abs().max().item())
+    def make_max_hook(arr, layer_idx):
+        def hook_fn(module, inp, output):
+            t = output[0] if isinstance(output, tuple) else output
+            try:
+                arr[layer_idx] = max(arr[layer_idx], t.detach().abs().max().item())
+            except Exception:
+                pass
         return hook_fn
 
     for lidx in range(num_layers):
-        h = model.model.layers[lidx].self_attn.register_forward_hook(make_kv_hook(lidx))
-        hooks.append(h)
+        attn = model.model.layers[lidx].self_attn
+        k_target = getattr(attn, "k_norm", None) or getattr(attn, "k_proj")  # post k_norm if Qwen3
+        v_target = getattr(attn, "v_proj")
+        hooks.append(k_target.register_forward_hook(make_max_hook(k_maxes, lidx)))
+        hooks.append(v_target.register_forward_hook(make_max_hook(v_maxes, lidx)))
 
     print("Collecting KV cache statistics...")
     for i, input_ids in enumerate(tqdm(calib_data[:num_samples])):
